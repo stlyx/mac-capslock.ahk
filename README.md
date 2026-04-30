@@ -1,4 +1,4 @@
-# CapLockMod
+# ⌨ mac-capslock.ahk
 
 macOS-style `CapsLock` behavior for Windows, built with **AutoHotkey v2**.
 
