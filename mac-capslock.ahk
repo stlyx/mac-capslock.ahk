@@ -1,13 +1,25 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
-IME_CMODE_NATIVE := 0x1
+; 远程控制 / 远程桌面 / 虚拟机 / 串流软件
+GroupAdd "RemoteApps", "ahk_exe mstsc.exe"          ; Windows 远程桌面
+GroupAdd "RemoteApps", "ahk_exe AnyDesk.exe"        ; AnyDesk
+GroupAdd "RemoteApps", "ahk_exe TeamViewer.exe"     ; TeamViewer
+GroupAdd "RemoteApps", "ahk_exe RustDesk.exe"       ; RustDesk
+GroupAdd "RemoteApps", "ahk_exe parsecd.exe"        ; Parsec
+GroupAdd "RemoteApps", "ahk_exe vmware.exe"         ; VMware
+GroupAdd "RemoteApps", "ahk_exe VirtualBoxVM.exe"   ; VirtualBox
+GroupAdd "RemoteApps", "ahk_exe moonlight.exe"      ; Moonlight
+GroupAdd "RemoteApps", "ahk_exe PcAccess.exe"       ; PcAccess
+
+; 只要当前窗口不是这些远程软件，下面的热键才启用
+#HotIf !WinActive("ahk_group RemoteApps")
 
 CapsLock::
 {
     ; Release within 250ms = tap. This mimics macOS CapsLock input switching.
     if KeyWait("CapsLock", "T0.25") {
-        ToggleImeNativeMode()
+        IME_Toggle()
         return
     }
 
@@ -17,46 +29,68 @@ CapsLock::
     SetCapsLockState isCapsOn ? "Off" : "On"
 }
 
-ToggleImeNativeMode()
-{
-    global IME_CMODE_NATIVE
+; 结束条件区，后面的热键恢复全局
+#HotIf
 
-    hwnd := WinExist("A")
+; 0 = 英文/关闭 IME
+; 1 = 中文/打开 IME
+IME_Set(open, winTitle := "A") {
+    hwnd := WinExist(winTitle)
 
-    ; Get the IME context for the active window.
-    ; For Microsoft Pinyin, flipping IME_CMODE_NATIVE usually toggles Chinese/English
-    ; without sending Ctrl+Space or Shift.
-    hIMC := DllCall("Imm32\ImmGetContext", "Ptr", hwnd, "Ptr")
-    if !hIMC
-        return false
+    ; 对当前活动窗口，尽量取真正获得焦点的子控件
+    if WinActive(winTitle) {
+        hwnd := GetFocusedHwnd(hwnd)
+    }
 
-    convBuf := Buffer(4, 0)
-    sentBuf := Buffer(4, 0)
+    imeWnd := DllCall("imm32\ImmGetDefaultIMEWnd", "Ptr", hwnd, "Ptr")
 
-    ok := DllCall(
-        "Imm32\ImmGetConversionStatus",
-        "Ptr", hIMC,
-        "Ptr", convBuf,
-        "Ptr", sentBuf
+    ; WM_IME_CONTROL = 0x0283
+    ; IMC_SETOPENSTATUS = 0x006
+    return DllCall(
+        "SendMessage",
+        "Ptr", imeWnd,
+        "UInt", 0x0283,
+        "Ptr", 0x006,
+        "Ptr", open ? 1 : 0,
+        "Ptr"
     )
+}
 
-    conv := NumGet(convBuf, 0, "UInt")
-    sent := NumGet(sentBuf, 0, "UInt")
+IME_Get(winTitle := "A") {
+    hwnd := WinExist(winTitle)
 
-    if (conv & IME_CMODE_NATIVE)
-        conv := conv & ~IME_CMODE_NATIVE
-    else
-        conv := conv | IME_CMODE_NATIVE
+    if WinActive(winTitle) {
+        hwnd := GetFocusedHwnd(hwnd)
+    }
 
-    mode := conv
+    imeWnd := DllCall("imm32\ImmGetDefaultIMEWnd", "Ptr", hwnd, "Ptr")
 
-    setOk := DllCall(
-        "Imm32\ImmSetConversionStatus",
-        "Ptr", hIMC,
-        "UInt", conv,
-        "UInt", sent
+    ; IMC_GETOPENSTATUS = 0x005
+    return DllCall(
+        "SendMessage",
+        "Ptr", imeWnd,
+        "UInt", 0x0283,
+        "Ptr", 0x005,
+        "Ptr", 0,
+        "Ptr"
     )
+}
 
-    DllCall("Imm32\ImmReleaseContext", "Ptr", hwnd, "Ptr", hIMC)
-    return mode
+IME_Toggle() {
+    IME_Set(!IME_Get())
+}
+
+GetFocusedHwnd(fallback := 0) {
+    ptrSize := A_PtrSize
+    cbSize := 8 + ptrSize * 6 + 16
+    gti := Buffer(cbSize, 0)
+
+    NumPut("UInt", cbSize, gti, 0)
+
+    if DllCall("GetGUIThreadInfo", "UInt", 0, "Ptr", gti.Ptr) {
+        hwndFocus := NumGet(gti, 8 + ptrSize, "Ptr")
+        return hwndFocus ? hwndFocus : fallback
+    }
+
+    return fallback
 }
